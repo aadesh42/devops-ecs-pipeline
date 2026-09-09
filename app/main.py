@@ -20,7 +20,12 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 @app.get("/")
 def root():
     log.info("root endpoint hit")
-    return {"service": "devops-demo", "version": APP_VERSION, "env": ENVIRONMENT}
+    return {
+        "service": "devops-demo",
+        "version": APP_VERSION,
+        "env": ENVIRONMENT,
+        "deployed_by": "github-actions",
+    }
 
 
 @app.get("/health")
