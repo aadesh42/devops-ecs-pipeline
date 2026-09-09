@@ -27,3 +27,8 @@ output "ecs_cluster_name" {
 output "ecs_service_name" {
   value = aws_ecs_service.app.name
 }
+
+output "github_actions_role_arn" {
+  description = "Role ARN for the GitHub Actions OIDC trust"
+  value       = aws_iam_role.github_actions.arn
+}

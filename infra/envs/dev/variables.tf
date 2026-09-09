@@ -57,3 +57,15 @@ variable "log_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "github_repository" {
+  description = "GitHub repo in owner/name format, used to scope the OIDC trust policy"
+  type        = string
+  default     = "aadesh42/devops-ecs-pipeline"
+}
+
+variable "github_branch" {
+  description = "Branch allowed to assume the deploy role"
+  type        = string
+  default     = "main"
+}
