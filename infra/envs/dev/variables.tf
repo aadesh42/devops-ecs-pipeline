@@ -59,9 +59,21 @@ variable "log_retention_days" {
 }
 
 variable "github_repository" {
-  description = "GitHub repo in owner/name format, used to scope the OIDC trust policy"
+  description = "GitHub repo in owner/name format"
   type        = string
   default     = "aadesh42/devops-ecs-pipeline"
+}
+
+variable "github_owner_id" {
+  description = "Immutable numeric GitHub owner ID, from the OIDC sub claim"
+  type        = string
+  default     = "96948136"
+}
+
+variable "github_repo_id" {
+  description = "Immutable numeric GitHub repository ID, from the OIDC sub claim"
+  type        = string
+  default     = "1361768931"
 }
 
 variable "github_branch" {
