@@ -32,3 +32,11 @@ output "github_actions_role_arn" {
   description = "Role ARN for the GitHub Actions OIDC trust"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "dashboard_url" {
+  value = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
+}
+
+output "sns_topic_arn" {
+  value = aws_sns_topic.alerts.arn
+}
