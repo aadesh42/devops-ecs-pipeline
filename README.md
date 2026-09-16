@@ -2,7 +2,7 @@
 
 A production-shaped AWS deployment pipeline built entirely from code: a containerized FastAPI service running on ECS Fargate behind an Application Load Balancer, provisioned with Terraform, and deployed automatically by GitHub Actions using OIDC federation — no static AWS credentials anywhere.
 
-**Live demo:** `http://<your-alb-dns-name>` *(replace, or remove this line when the stack is torn down)*
+> The stack is torn down between sessions to control cost. See [Running it yourself](#running-it-yourself) — a full rebuild from an empty environment takes about ten minutes.
 
 ---
 
@@ -75,6 +75,14 @@ push to main
 
 Pull requests run the test job only. Deployments are gated on tests passing.
 
+Each deployed container reports the commit it was built from:
+
+```json
+{"service":"devops-demo","version":"d78b5f9fd429087a05041ccfc5836c93404eb60f","env":"dev","deployed_by":"github-actions"}
+```
+
+The running image, the task definition revision, and the Git commit are all traceable to one another — which is what makes the rollback below verifiable rather than assumed.
+
 ---
 
 ## Design decisions and trade-offs
@@ -85,7 +93,7 @@ A production VPC would place application tasks in private subnets with a NAT Gat
 
 Instead, tasks run in public subnets with a security group that accepts traffic **only** from the load balancer's security group — an SG-to-SG reference rather than a CIDR range. Tasks have public IPs for ECR image pulls, but nothing on the internet can reach them directly.
 
-*Production change:* private subnets, NAT Gateway (or VPC endpoints for ECR/CloudWatch/S3, which are cheaper for this traffic pattern).
+*Production change:* private subnets, NAT Gateway, or VPC endpoints for ECR/CloudWatch/S3, which are cheaper for this traffic pattern.
 
 ### Terraform manages infrastructure; the pipeline manages deployments
 
@@ -127,7 +135,7 @@ The pipeline initially failed with:
 Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity
 ```
 
-The trust policy matched every published example. Widening the `sub` condition to a wildcard didn't help, which ruled out a simple typo.
+The trust policy matched every published example. Widening the `sub` condition to a wildcard didn't help, which ruled out a simple typo — and STS deliberately returns the same generic message for a policy mismatch and for an ARN that doesn't resolve, so the error text gave nothing away.
 
 Decoding the actual JWT claim inside the workflow revealed the cause:
 
@@ -135,9 +143,15 @@ Decoding the actual JWT claim inside the workflow revealed the cause:
 repo:owner@96948136/devops-ecs-pipeline@1361768931:ref:refs/heads/main
 ```
 
-GitHub repositories created after July 15, 2026 use an **immutable subject format** that embeds the numeric owner and repository IDs, preventing a recycled namespace from minting tokens that match an existing trust policy. Nearly every OIDC tutorial online still shows the older name-only format.
+GitHub repositories created after July 15, 2026 use an **immutable subject format** that embeds the numeric owner and repository IDs, preventing a recycled namespace from minting tokens that match an existing trust policy. The `@` delimiter is used because it cannot appear in GitHub usernames or repository names. Nearly every OIDC tutorial still shows the older name-only format.
 
-The trust policy now constructs the immutable form explicitly, retaining an exact `StringEquals` match rather than falling back to a wildcard.
+The trust policy now constructs the immutable form explicitly, keeping an exact `StringEquals` match rather than falling back to a wildcard:
+
+```hcl
+values = [
+  "repo:${owner}@${var.github_owner_id}/${repo}@${var.github_repo_id}:ref:refs/heads/${var.github_branch}"
+]
+```
 
 *Reference: [GitHub Docs — OpenID Connect reference](https://docs.github.com/en/actions/reference/security/oidc)*
 
@@ -159,9 +173,9 @@ aws ecs stop-task --cluster devops-ecs-dev-cluster --task <task-arn> --reason "c
 | 13:34:00 | 1 | 1 | 0 |
 | 13:34:33 | 1 | 0 | 1 |
 
-Full recovery in ~66 seconds with no human intervention.
+Full recovery in **66 seconds** with no human intervention. ECS detected the missing task, scheduled a replacement, and the load balancer registered it once health checks passed.
 
-With `desired_count = 1` there is a brief outage during replacement. Running two tasks across both availability zones would eliminate it, at roughly double the compute cost.
+With `desired_count = 1` there is a brief outage during replacement. Running two tasks across both availability zones would eliminate it, at roughly double the compute cost — a reasonable trade for a demonstration environment, not for production.
 
 ### Rollback
 
@@ -174,11 +188,11 @@ aws ecs update-service \
   --task-definition devops-ecs-dev:<previous-revision>
 ```
 
-Measured rollback: **167 seconds**, with no period of zero healthy targets. The application confirmed the change — the `version` field returned by the service reverted from the current commit SHA to the previous revision's value.
+Measured rollback: **167 seconds**, with no period of zero healthy targets. The application confirmed the change — the `version` field returned by the service reverted from the current commit SHA to the previous revision's value, proving traffic was genuinely served by the older build rather than the deployment merely reporting success.
 
 Roughly 150 seconds of that is deliberate safety margin rather than latency: a 60-second health check grace period, two consecutive health checks at 30-second intervals, and a 30-second deregistration delay while the old task drains. Tightening those would speed up both deploys and rollbacks at the cost of tolerating slow-starting containers less well.
 
-Zero downtime comes from `deployment_minimum_healthy_percent = 100`, which prevents ECS from stopping the old task before the replacement is healthy and registered with the load balancer.
+Zero downtime comes from `deployment_minimum_healthy_percent = 100`, which prevents ECS from stopping the old task before its replacement is healthy and registered with the load balancer.
 
 ---
 
@@ -193,7 +207,7 @@ terraform init && terraform apply
 
 # 2. Update the backend bucket name in infra/envs/dev/providers.tf
 
-# 3. Create the ECR repository first
+# 3. Create the ECR repository first — the ECS service needs an image to exist
 cd ../envs/dev
 terraform init
 terraform apply -target="aws_ecr_repository.app"
@@ -210,7 +224,9 @@ terraform apply
 terraform output -raw github_actions_role_arn
 ```
 
-Update `github_owner_id` and `github_repo_id` in `variables.tf` to match your repository's OIDC claim.
+Update `github_owner_id` and `github_repo_id` in `variables.tf` to match your repository's OIDC claim. You can read them by decoding the `sub` claim inside a workflow run.
+
+After a rebuild, the ALB receives a new DNS name and the SNS email subscription must be confirmed again.
 
 ---
 
@@ -231,7 +247,7 @@ Teardown between sessions:
 cd infra/envs/dev && terraform destroy
 ```
 
-The state bucket in `infra/bootstrap` is left in place. Rebuilding takes about five minutes plus one push.
+The state bucket in `infra/bootstrap` is left in place.
 
 ---
 
